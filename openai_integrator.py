@@ -241,7 +241,7 @@ IMPORTANT: Do not simply copy existing sections. Every section that gets updated
             self.last_user_prompt = user_prompt
             
             response = self.client.chat.completions.create(
-                model=config.get('ai_model', 'gpt-4o'),
+                model=config.get('ai_model', 'gpt-4o-mini'),
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -381,7 +381,7 @@ IMPORTANT: Do not simply copy existing sections. Every section that gets updated
             self.last_user_prompt = user_prompt
             
             response = self.client.chat.completions.create(
-                model=config.get('ai_model', 'gpt-4o'),
+                model=config.get('ai_model', 'gpt-4o-mini'),
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}

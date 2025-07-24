@@ -58,12 +58,14 @@ class QuodTaskApp:
             margin: 1rem 0;
             max-height: 300px;
             overflow-y: auto;
+            color: #212529;
         }
         .processing-info {
             background-color: #e7f3ff;
             border-left: 4px solid #2196F3;
             padding: 1rem;
             margin: 1rem 0;
+            color: #0c5460;
         }
         .success-message {
             background-color: #d4edda;
@@ -175,7 +177,7 @@ class QuodTaskApp:
             processing_mode = st.selectbox(
                 "Processing Mode",
                 ["Update Existing Sections", "Add New Sections", "Full Document Rewrite"],
-                index=0,
+                index=2,
                 help="Choose how to process the documentation"
             )
             
@@ -197,7 +199,7 @@ class QuodTaskApp:
             ai_model = st.selectbox(
                 "OpenAI Model",
                 ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-                index=0,
+                index=1,
                 help="Choose the OpenAI model for processing"
             )
             
@@ -205,7 +207,7 @@ class QuodTaskApp:
                 "AI Temperature",
                 min_value=0.0,
                 max_value=1.0,
-                value=0.3,
+                value=0.1,
                 step=0.1,
                 help="Lower values = more consistent, Higher values = more creative"
             )
