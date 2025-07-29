@@ -77,8 +77,17 @@ The application automatically adds FASTDOC markers to indicate changes:
 ## Processing Modes
 
 1. **Update Existing Sections**: Modify existing content based on Jira information
-2. **Add New Sections**: Add new sections for new features/requirements
-3. **Full Document Rewrite**: Comprehensive update of the entire document
+2. **Add New Sections**: Add new sections for new features/requirements  
+3. **Full Modification**: Both adds new sections and updates existing sections (comprehensive update)
+
+## JIRA Context Processing
+
+The application now includes advanced JIRA context processing:
+
+- **Structured JIRA Analysis**: Automatically extracts ticket information (title, assignee, status, etc.)
+- **Markdown Preview**: Preview structured JIRA context with proper markdown rendering
+- **Enhanced Context**: Use structured JIRA information as additional context for documentation modification
+- **Editable Context**: Manually edit the structured JIRA context before processing
 
 ## AI Configuration
 

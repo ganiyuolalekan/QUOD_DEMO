@@ -138,148 +138,479 @@ class AsciiDocProcessor:
     
     def add_fastdoc_markers(self, original_content: str, updated_content: str) -> str:
         """
-        Add FASTDOC markers to indicate changes in the updated content
+        Add FASTDOC markers to indicate changes in the updated content using individual paragraph analysis
         
         Args:
             original_content (str): Original AsciiDoc content
             updated_content (str): Updated AsciiDoc content
             
         Returns:
-            str: Updated content with FASTDOC markers
+            str: Updated content with FASTDOC markers around only the changed paragraphs
         """
         # If content is identical, return original without markers
         if original_content.strip() == updated_content.strip():
             return updated_content
         
-        # Split content into sections by headings
-        original_sections = self._split_into_sections(original_content)
-        updated_sections = self._split_into_sections(updated_content)
+        # Split content into paragraphs using double newlines as boundaries
+        original_paragraphs = self._split_into_paragraphs(original_content)
+        updated_paragraphs = self._split_into_paragraphs(updated_content)
         
-        result_lines = []
+        # Create a mapping of updated paragraphs to their change status
+        paragraph_changes = []
         
-        for section in updated_sections:
-            section_heading = section['heading']
-            section_content = section['content']
-            section_lines = section['lines']
+        # Track which original paragraphs have been matched
+        matched_original = set()
+        
+        # First pass: identify unchanged paragraphs
+        for updated_para in updated_paragraphs:
+            change_info = {'paragraph': updated_para, 'status': 'new', 'original_match': None}
             
-            # Find corresponding section in original
-            original_section = self._find_matching_section(section_heading, original_sections)
+            # Look for exact match in original (unchanged paragraph)
+            for i, original_para in enumerate(original_paragraphs):
+                if i not in matched_original and self._paragraphs_identical(original_para, updated_para):
+                    change_info['status'] = 'unchanged'
+                    change_info['original_match'] = i
+                    matched_original.add(i)
+                    break
             
-            if original_section is None:
-                # This is a completely new section
-                result_lines.append(f"// *FASTDOC* - New Section Added")
-                result_lines.extend(section_lines)
-                result_lines.append(f"// *FASTDOC* - End New Section")
-            else:
-                # Compare section content to see if it's actually different
-                if self._sections_are_different(original_section['content'], section_content):
-                    # Section has been modified
-                    result_lines.append(f"// *FASTDOC* - Updated Section")
-                    result_lines.extend(section_lines)
-                    result_lines.append(f"// *FASTDOC* - End Update")
-                else:
-                    # Section is unchanged, add without markers
-                    result_lines.extend(section_lines)
+            paragraph_changes.append(change_info)
         
-        return '\n'.join(result_lines)
-
-    def _split_into_sections(self, content: str) -> List[Dict]:
-        """Split content into sections based on headings"""
-        lines = content.split('\n')
-        sections = []
-        current_section = {
-            'heading': None,
-            'content': [],
-            'lines': []
-        }
-        
-        for line in lines:
-            heading_match = self._parse_heading_line(line)
-            
-            if heading_match:
-                # Save previous section if it has content
-                if current_section['heading'] or current_section['content']:
-                    current_section['content'] = '\n'.join(current_section['content']).strip()
-                    sections.append(current_section)
+        # Second pass: identify modifications for paragraphs still marked as 'new'
+        for change_info in paragraph_changes:
+            if change_info['status'] == 'new':
+                updated_para = change_info['paragraph']
                 
-                # Start new section
-                current_section = {
-                    'heading': heading_match[1],  # heading title
-                    'content': [],
-                    'lines': [line]
-                }
-            else:
-                current_section['content'].append(line)
-                current_section['lines'].append(line)
+                # Look for best similarity match among unmatched originals
+                best_match_idx = None
+                best_similarity = 0
+                
+                for i, original_para in enumerate(original_paragraphs):
+                    if i not in matched_original:
+                        similarity = self._calculate_paragraph_similarity(original_para, updated_para)
+                        if similarity > best_similarity and similarity > 0.4:  # Threshold for modification
+                            best_similarity = similarity
+                            best_match_idx = i
+                
+                if best_match_idx is not None:
+                    # This is a modification
+                    matched_original.add(best_match_idx)
+                    original_para = original_paragraphs[best_match_idx]
+                    
+                    if self._is_substantial_paragraph(updated_para):
+                        change_type = self._analyze_single_paragraph_change(original_para, updated_para)
+                        if change_type == 'unchanged':
+                            change_info['status'] = 'unchanged'
+                        elif change_type == 'minor_edit':
+                            change_info['status'] = 'minor_edit'
+                        elif change_type == 'expansion':
+                            change_info['status'] = 'expansion'
+                        else:
+                            change_info['status'] = 'modification'
+                    else:
+                        change_info['status'] = 'unchanged'
+                    
+                    change_info['original_match'] = best_match_idx
+                # If no match found, it remains 'new'
         
-        # Add final section
-        if current_section['heading'] or current_section['content']:
-            current_section['content'] = '\n'.join(current_section['content']).strip()
-            sections.append(current_section)
+        # Build the final result with markers only around changed paragraphs
+        result_paragraphs = []
         
-        return sections
-    
-    def _find_matching_section(self, heading: str, sections: List[Dict]) -> Optional[Dict]:
-        """Find a section with matching heading"""
-        if not heading:
-            return None
+        for change_info in paragraph_changes:
+            para = change_info['paragraph']
+            status = change_info['status']
             
-        for section in sections:
-            if section['heading'] and section['heading'].lower().strip() == heading.lower().strip():
-                return section
-        return None
+            if status == 'unchanged':
+                # No markers for unchanged paragraphs
+                result_paragraphs.append(para)
+            elif status in ['minor_edit', 'expansion', 'modification']:
+                result_paragraphs.append("// *FASTDOC* - Start Modification")
+                result_paragraphs.append(para)
+                result_paragraphs.append("// *FASTDOC* - End Modification")
+            elif status == 'new':
+                if self._is_substantial_paragraph(para):
+                    result_paragraphs.append("// *FASTDOC* - Start Modification")
+                    result_paragraphs.append(para)
+                    result_paragraphs.append("// *FASTDOC* - End Modification")
+                else:
+                    result_paragraphs.append(para)
+        
+        # Add notice about deleted paragraphs at the end
+        deleted_paragraphs = []
+        for i, original_para in enumerate(original_paragraphs):
+            if i not in matched_original and self._is_substantial_paragraph(original_para):
+                deleted_paragraphs.append(original_para)
+        
+        if deleted_paragraphs:
+            result_paragraphs.append(f"// *FASTDOC* - Content Removed ({len(deleted_paragraphs)} paragraph(s))")
+        
+        # Join paragraphs back together, preserving original paragraph spacing
+        return self._join_paragraphs(result_paragraphs)
     
-    def _sections_are_different(self, original_content: str, updated_content: str) -> bool:
+    def _paragraphs_identical(self, para1: str, para2: str) -> bool:
         """
-        Check if two section contents are meaningfully different
+        Check if two paragraphs are identical (after normalizing whitespace)
         
         Args:
-            original_content (str): Original section content
-            updated_content (str): Updated section content
+            para1 (str): First paragraph
+            para2 (str): Second paragraph
             
         Returns:
-            bool: True if sections are different enough to warrant FASTDOC markers
+            bool: True if paragraphs are identical
         """
-        # Normalize content for comparison
-        orig_normalized = self._normalize_content(original_content)
-        updated_normalized = self._normalize_content(updated_content)
+        return para1.strip() == para2.strip()
+    
+    def _calculate_paragraph_similarity(self, para1: str, para2: str) -> float:
+        """
+        Calculate similarity between two paragraphs with special handling for AsciiDoc formatting
         
-        # If content is identical after normalization, no change
-        if orig_normalized == updated_normalized:
+        Args:
+            para1 (str): First paragraph
+            para2 (str): Second paragraph
+            
+        Returns:
+            float: Similarity ratio between 0.0 and 1.0
+        """
+        if not para1.strip() or not para2.strip():
+            return 0.0
+        
+        # Normalize for comparison - remove most formatting but preserve structure
+        normalized1 = self._normalize_for_comparison(para1)
+        normalized2 = self._normalize_for_comparison(para2)
+        
+        # Basic similarity
+        basic_similarity = difflib.SequenceMatcher(None, normalized1, normalized2).ratio()
+        
+        # Check for list structure similarity
+        list1_items = self._extract_list_items(para1)
+        list2_items = self._extract_list_items(para2)
+        
+        if list1_items and list2_items:
+            # Both are lists - compare the list items
+            # If one list has all items from the other plus more, it's likely an expansion
+            set1 = set(item.strip() for item in list1_items)
+            set2 = set(item.strip() for item in list2_items)
+            
+            if set1.issubset(set2) or set2.issubset(set1):
+                # One is a subset of the other - high similarity
+                return max(0.6, basic_similarity)
+            else:
+                # Lists with some overlap
+                common_items = len(set1.intersection(set2))
+                total_items = len(set1.union(set2))
+                if total_items > 0:
+                    list_similarity = common_items / total_items
+                    return max(basic_similarity, list_similarity * 0.8)
+        
+        return basic_similarity
+    
+    def _normalize_for_comparison(self, text: str) -> str:
+        """
+        Normalize text for comparison while preserving structure
+        
+        Args:
+            text (str): Text to normalize
+            
+        Returns:
+            str: Normalized text
+        """
+        # Convert various bullet styles to a standard format
+        normalized = re.sub(r'^\s*[*_\-]\s+', '• ', text, flags=re.MULTILINE)
+        
+        # Normalize bold/italic formatting
+        normalized = re.sub(r'\*\*([^*]+)\*\*', r'_\1_', normalized)  # **bold** -> _italic_
+        normalized = re.sub(r'\*([^*]+)\*', r'_\1_', normalized)       # *bold* -> _italic_
+        
+        # Normalize whitespace
+        normalized = re.sub(r'\s+', ' ', normalized)
+        
+        return normalized.strip().lower()
+    
+    def _extract_list_items(self, text: str) -> List[str]:
+        """
+        Extract list items from text
+        
+        Args:
+            text (str): Text to extract list items from
+            
+        Returns:
+            List[str]: List of extracted items
+        """
+        lines = text.split('\n')
+        items = []
+        
+        for line in lines:
+            stripped = line.strip()
+            if (stripped.startswith('*') or stripped.startswith('_') or 
+                stripped.startswith('-') or stripped.startswith('.')):
+                # Extract the content after the bullet
+                content = re.sub(r'^[*_\-\.]\s*', '', stripped)
+                if content:
+                    items.append(content)
+        
+        return items
+    
+    def _analyze_single_paragraph_change(self, old_paragraph: str, new_paragraph: str) -> str:
+        """
+        Analyze the type of change between two individual paragraphs
+        
+        Args:
+            old_paragraph (str): Original paragraph
+            new_paragraph (str): Updated paragraph
+            
+        Returns:
+            str: Type of change ('unchanged', 'minor_edit', 'substantial_modification', 'expansion')
+        """
+        if not old_paragraph.strip() and not new_paragraph.strip():
+            return 'unchanged'
+        
+        if not old_paragraph.strip():
+            return 'substantial_modification'  # New content
+        
+        if not new_paragraph.strip():
+            return 'substantial_modification'  # Content removed
+        
+        # Calculate similarity ratio
+        similarity = difflib.SequenceMatcher(None, old_paragraph, new_paragraph).ratio()
+        
+        # If very similar, check word-level changes
+        if similarity > 0.8:
+            old_words = set(old_paragraph.lower().split())
+            new_words = set(new_paragraph.lower().split())
+            
+            added_words = new_words - old_words
+            removed_words = old_words - new_words
+            
+            # Minor edit threshold
+            if len(added_words) <= 3 and len(removed_words) <= 3:
+                return 'minor_edit' if (added_words or removed_words) else 'unchanged'
+        
+        # Check for expansion (significant length increase)
+        old_length = len(old_paragraph.split())
+        new_length = len(new_paragraph.split())
+        
+        if new_length > old_length * 1.5 and similarity > 0.5:
+            return 'expansion'
+        
+        # Determine if change is substantial
+        if similarity < 0.6:
+            return 'substantial_modification'
+        else:
+            return 'minor_edit'
+    
+    def _paragraphs_similar(self, para1: str, para2: str, threshold: float = 0.7) -> bool:
+        """
+        Check if two paragraphs are similar enough to be considered the same
+        
+        Args:
+            para1 (str): First paragraph
+            para2 (str): Second paragraph
+            threshold (float): Similarity threshold (0.0 to 1.0)
+            
+        Returns:
+            bool: True if paragraphs are similar
+        """
+        if not para1.strip() or not para2.strip():
             return False
         
-        # Check if there's substantial difference (more than just whitespace/formatting)
-        orig_words = set(orig_normalized.split())
-        updated_words = set(updated_normalized.split())
-        
-        # Calculate word-level difference
-        added_words = updated_words - orig_words
-        removed_words = orig_words - updated_words
-        
-        # Consider it different if there are new words added or significant changes
-        significant_change_threshold = 3  # At least 3 new/changed words
-        
-        # Check for meaningful new content
-        meaningful_additions = [word for word in added_words 
-                              if len(word) > 2 and not word.isdigit()]
-        
-        return (len(meaningful_additions) >= significant_change_threshold or
-                len(added_words) + len(removed_words) >= significant_change_threshold * 2)
+        similarity = difflib.SequenceMatcher(None, para1.lower(), para2.lower()).ratio()
+        return similarity >= threshold
     
-    def _normalize_content(self, content: str) -> str:
-        """Normalize content for comparison"""
-        if not content:
+    def _split_into_paragraphs(self, content: str) -> List[str]:
+        """
+        Split content into logical AsciiDoc blocks (not just by double newlines)
+        
+        Args:
+            content (str): Content to split
+            
+        Returns:
+            List[str]: List of logical blocks (headings, paragraphs, lists, code blocks, etc.)
+        """
+        if not content.strip():
+            return []
+        
+        lines = content.split('\n')
+        blocks = []
+        current_block_lines = []
+        current_block_type = None
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped_line = line.strip()
+            
+            # Detect block types
+            is_heading = self._parse_heading_line(line) is not None
+            is_list_item = (stripped_line.startswith('*') or 
+                          stripped_line.startswith('_') or 
+                          stripped_line.startswith('-') or
+                          stripped_line.startswith('.'))
+            is_code_block = stripped_line.startswith('----')
+            is_admonition = stripped_line.startswith(('NOTE:', 'WARNING:', 'TIP:', 'IMPORTANT:', 'CAUTION:'))
+            is_empty = not stripped_line
+            is_attribute = stripped_line.startswith((':')) or stripped_line.startswith('ifndef::') or stripped_line.startswith('endif::')
+            is_anchor = stripped_line.startswith('[[') and stripped_line.endswith(']]')
+            
+            # Determine what to do based on current and previous context
+            if is_empty:
+                # Empty line - might end current block or be part of it
+                if current_block_type == 'list':
+                    # For lists, empty line might be internal formatting or end of list
+                    # Look ahead to see if next non-empty line is also a list item
+                    next_non_empty_idx = i + 1
+                    while next_non_empty_idx < len(lines) and not lines[next_non_empty_idx].strip():
+                        next_non_empty_idx += 1
+                    
+                    if (next_non_empty_idx < len(lines) and 
+                        (lines[next_non_empty_idx].strip().startswith('*') or 
+                         lines[next_non_empty_idx].strip().startswith('_') or
+                         lines[next_non_empty_idx].strip().startswith('-') or
+                         lines[next_non_empty_idx].strip().startswith('.'))):
+                        # Next item is also a list item - include empty line in current block
+                        current_block_lines.append(line)
+                    else:
+                        # End of list
+                        if current_block_lines:
+                            blocks.append('\n'.join(current_block_lines).strip())
+                            current_block_lines = []
+                            current_block_type = None
+                else:
+                    # For other types, empty line ends the block
+                    if current_block_lines:
+                        blocks.append('\n'.join(current_block_lines).strip())
+                        current_block_lines = []
+                        current_block_type = None
+                
+            elif is_heading:
+                # Heading always starts a new block
+                if current_block_lines:
+                    blocks.append('\n'.join(current_block_lines).strip())
+                current_block_lines = [line]
+                current_block_type = 'heading'
+                
+            elif is_list_item:
+                if current_block_type != 'list':
+                    # Starting a new list block
+                    if current_block_lines:
+                        blocks.append('\n'.join(current_block_lines).strip())
+                    current_block_lines = [line]
+                    current_block_type = 'list'
+                else:
+                    # Continuing current list
+                    current_block_lines.append(line)
+                    
+            elif is_code_block:
+                if current_block_lines:
+                    blocks.append('\n'.join(current_block_lines).strip())
+                    current_block_lines = []
+                
+                # Handle code block as a single unit
+                code_block_lines = [line]
+                i += 1
+                while i < len(lines):
+                    code_block_lines.append(lines[i])
+                    if lines[i].strip().startswith('----'):
+                        break
+                    i += 1
+                
+                blocks.append('\n'.join(code_block_lines))
+                current_block_lines = []
+                current_block_type = None
+                
+            elif is_attribute or is_anchor:
+                if current_block_lines:
+                    blocks.append('\n'.join(current_block_lines).strip())
+                blocks.append(line.strip())
+                current_block_lines = []
+                current_block_type = None
+                
+            elif is_admonition:
+                if current_block_lines:
+                    blocks.append('\n'.join(current_block_lines).strip())
+                current_block_lines = [line]
+                current_block_type = 'admonition'
+                
+            else:
+                # Regular content line
+                if current_block_type is None:
+                    current_block_type = 'paragraph'
+                current_block_lines.append(line)
+            
+            i += 1
+        
+        # Add final block
+        if current_block_lines:
+            blocks.append('\n'.join(current_block_lines).strip())
+        
+        return [block for block in blocks if block]
+    
+    def _join_paragraphs(self, paragraphs: List[str]) -> str:
+        """
+        Join paragraphs back together with proper spacing and visual separation
+        
+        Args:
+            paragraphs (List[str]): List of paragraphs to join
+            
+        Returns:
+            str: Joined content with proper paragraph spacing and marker separation
+        """
+        if not paragraphs:
             return ""
         
-        # Remove extra whitespace and normalize
-        normalized = re.sub(r'\s+', ' ', content.strip())
-        # Remove common markup that doesn't affect meaning
-        normalized = re.sub(r'[*_`]', '', normalized)
-        # Convert to lowercase for comparison
-        normalized = normalized.lower()
+        result_parts = []
         
-        return normalized
+        for i, paragraph in enumerate(paragraphs):
+            if not paragraph:
+                continue
+                
+            current_is_marker = paragraph.strip().startswith('// *FASTDOC*')
+            prev_is_marker = (i > 0 and paragraphs[i-1].strip().startswith('// *FASTDOC*'))
+            next_is_marker = (i < len(paragraphs)-1 and paragraphs[i+1].strip().startswith('// *FASTDOC*'))
+            
+            # Add the paragraph
+            result_parts.append(paragraph)
+            
+            # Determine spacing for next paragraph
+            if i < len(paragraphs) - 1 and paragraphs[i + 1]:
+                if current_is_marker or next_is_marker:
+                    # Single newline between markers and content
+                    result_parts.append('\n')
+                else:
+                    # Double newline between regular content paragraphs
+                    # But add extra space if this content paragraph is followed by a marker
+                    # to create visual separation
+                    if (i + 1 < len(paragraphs) - 1 and 
+                        paragraphs[i + 1].strip().startswith('// *FASTDOC*')):
+                        # This unchanged paragraph is followed by a marker - add extra space
+                        result_parts.append('\n\n')
+                    else:
+                        result_parts.append('\n\n')
+        
+        return ''.join(result_parts)
+    
+    def _is_substantial_paragraph(self, paragraph: str) -> bool:
+        """
+        Check if a paragraph contains substantial content worth marking
+        
+        Args:
+            paragraph (str): Paragraph to check
+            
+        Returns:
+            bool: True if paragraph has substantial content
+        """
+        if not paragraph.strip():
+            return False
+        
+        # Remove markup and count meaningful words
+        cleaned = re.sub(r'[=*_`\[\](){}]', '', paragraph)
+        words = [word for word in cleaned.split() if len(word) > 2 and not word.isdigit()]
+        
+        # Consider substantial if has meaningful content
+        return (len(words) >= 3 or                    # At least 3 meaningful words
+                self._parse_heading_line(paragraph) or  # Is a heading
+                '----' in paragraph or                   # Code block
+                paragraph.strip().startswith(('NOTE:', 'WARNING:', 'TIP:')))  # Admonition
 
+    
     def render_for_display(self, content: str) -> str:
         """
         Render AsciiDoc content for display in Streamlit
@@ -313,12 +644,12 @@ class AsciiDocProcessor:
             if "FASTDOC" in line:
                 # Escape the line content to prevent HTML issues
                 escaped_line = html.escape(line)
-                if "New Section" in line:
-                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #e7f3ff; border-left: 4px solid #2196F3; padding: 8px; margin: 8px 0; font-weight: bold; color: #1976D2;">🆕 {escaped_line}</div>')
-                elif "Updated Section" in line:
-                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 8px; margin: 8px 0; font-weight: bold; color: #856404;">✏️ {escaped_line}</div>')
-                elif "End Update" in line:
+                if "Start Modification" in line:
+                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 8px; margin: 8px 0; font-weight: bold; color: #856404;">🔧 {escaped_line}</div>')
+                elif "End Modification" in line:
                     html_lines.append(f'<div class="fastdoc-marker" style="background-color: #d4edda; border-left: 4px solid #28a745; padding: 8px; margin: 8px 0; font-weight: bold; color: #155724;">✅ {escaped_line}</div>')
+                elif "Content Removed" in line:
+                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 8px; margin: 8px 0; font-weight: bold; color: #721c24;">🗑️ {escaped_line}</div>')
                 else:
                     html_lines.append(f'<div class="fastdoc-marker" style="background-color: #f8f9fa; border-left: 4px solid #6c757d; padding: 8px; margin: 8px 0; font-weight: bold;">🏷️ {escaped_line}</div>')
                 continue
@@ -457,7 +788,392 @@ NOTE: This is an important note.
     print(f"Found {len(sections)} sections:")
     for section in sections:
         print(f"  Level {section.level}: {section.title}")
+    
+    # Test the new paragraph-level FASTDOC marker functionality
+    print("\n=== Testing Paragraph-Level FASTDOC Markers ===")
+    
+    # Create a modified version to test markers
+    modified_content = """= Main Title
+
+This is the introduction paragraph with additional details about the system.
+
+== Section One
+
+Content for section one with **bold text** and new information about implementation.
+
+This is a completely new paragraph that was added.
+
+=== Subsection
+
+Some content here that has been updated with more details.
+
+== Section Two  
+
+More content with *italic text* and `inline code`.
+
+== New Section
+
+This is an entirely new section that was added to the documentation.
+
+----
+code block content
+here
+with new lines
+----
+
+NOTE: This is an important note.
+
+WARNING: This is a new warning that was added.
+"""
+
+    # Test FASTDOC markers
+    marked_content = processor.add_fastdoc_markers(sample_content, modified_content)
+    
+    print("Content with FASTDOC markers:")
+    print("=" * 50)
+    print(marked_content)
+    print("=" * 50)
+    
+    # Count markers
+    marker_count = marked_content.count("*FASTDOC*")
+    print(f"Total FASTDOC markers added: {marker_count}")
+
+
+def test_paragraph_detection():
+    """Test the new individual paragraph detection and marking logic"""
+    processor = AsciiDocProcessor()
+    
+    original = """= Title
+
+First paragraph that remains unchanged.
+
+Second paragraph with original content.
+
+Third paragraph to be removed.
+
+== Section
+
+Section content here.
+
+Another paragraph in the section."""
+
+    updated = """= Title
+
+First paragraph that remains unchanged.
+
+Second paragraph with original content that has been modified with additional details.
+
+== Section
+
+Section content here with updates and new information.
+
+Another paragraph in the section.
+
+This is a completely new paragraph added to the section.
+
+== New Section
+
+Brand new section with new content."""
+
+    print("=== Individual Paragraph Marking Test ===")
+    
+    # Test paragraph splitting
+    orig_paragraphs = processor._split_into_paragraphs(original)
+    updated_paragraphs = processor._split_into_paragraphs(updated)
+    
+    print(f"Original paragraphs: {len(orig_paragraphs)}")
+    for i, p in enumerate(orig_paragraphs):
+        print(f"  {i+1}: {p[:60]}...")
+    
+    print(f"\nUpdated paragraphs: {len(updated_paragraphs)}")
+    for i, p in enumerate(updated_paragraphs):
+        print(f"  {i+1}: {p[:60]}...")
+    
+    # Test individual paragraph change analysis
+    print("\n=== Individual Paragraph Change Analysis ===")
+    
+    # Test some specific paragraph comparisons
+    test_cases = [
+        ("First paragraph that remains unchanged.", "First paragraph that remains unchanged."),
+        ("Second paragraph with original content.", "Second paragraph with original content that has been modified with additional details."),
+        ("Section content here.", "Section content here with updates and new information."),
+    ]
+    
+    for old_para, new_para in test_cases:
+        change_type = processor._analyze_single_paragraph_change(old_para, new_para)
+        print(f"Change type: {change_type}")
+        print(f"  Old: {old_para[:50]}...")
+        print(f"  New: {new_para[:50]}...")
+        print()
+    
+    # Test the full marking system
+    print("=== Result with Individual Paragraph Markers ===")
+    result = processor.add_fastdoc_markers(original, updated)
+    print(result)
+    
+    # Count different types of markers
+    marker_types = {
+        'Start Modification': result.count('Start Modification'),
+        'End Modification': result.count('End Modification'),
+        'Content Removed': result.count('Content Removed'),
+    }
+    
+    print(f"\n=== Marker Statistics ===")
+    for marker_type, count in marker_types.items():
+        if count > 0:
+            print(f"{marker_type}: {count}")
+
+
+def test_precise_paragraph_marking():
+    """Test that only changed paragraphs get marked, not entire sections"""
+    processor = AsciiDocProcessor()
+    
+    original = """= Documentation
+
+This paragraph stays the same.
+
+This paragraph will change.
+
+This paragraph also stays the same.
+
+== Section
+
+Unchanged section paragraph.
+
+Section paragraph to modify.
+
+Another unchanged paragraph."""
+
+    updated = """= Documentation
+
+This paragraph stays the same.
+
+This paragraph will change and now has additional content added to it.
+
+This paragraph also stays the same.
+
+== Section
+
+Unchanged section paragraph.
+
+Section paragraph to modify with new details and information.
+
+Another unchanged paragraph.
+
+New paragraph added to the section."""
+
+    print("=== Precise Paragraph Marking Test ===")
+    print("This test verifies that only the specific paragraphs that changed get markers.")
+    print()
+    
+    result = processor.add_fastdoc_markers(original, updated)
+    
+    print("Result:")
+    print("-" * 60)
+    print(result)
+    print("-" * 60)
+    
+    # Verify that unchanged paragraphs don't have markers
+    lines = result.split('\n')
+    unchanged_paragraphs = [
+        "This paragraph stays the same.",
+        "This paragraph also stays the same.",
+        "Unchanged section paragraph.",
+        "Another unchanged paragraph."
+    ]
+    
+    print("\n=== Verification ===")
+    print("Checking that unchanged paragraphs are NOT directly marked:")
+    print("(Being adjacent to markers for other paragraphs is expected and OK)")
+    
+    for unchanged in unchanged_paragraphs:
+        # Find the line with this paragraph
+        paragraph_line_index = None
+        for i, line in enumerate(lines):
+            if line.strip() == unchanged.strip():
+                paragraph_line_index = i
+                break
+        
+        if paragraph_line_index is not None:
+            # Check if this paragraph is DIRECTLY marked (has start marker before AND end marker after)
+            has_start_marker_before = (paragraph_line_index > 0 and 
+                                     "*FASTDOC*" in lines[paragraph_line_index-1] and
+                                     "Start Modification" in lines[paragraph_line_index-1])
+            
+            has_end_marker_after = (paragraph_line_index < len(lines)-1 and 
+                                   "*FASTDOC*" in lines[paragraph_line_index+1] and
+                                   "End Modification" in lines[paragraph_line_index+1])
+            
+            is_directly_marked = has_start_marker_before and has_end_marker_after
+            
+            if is_directly_marked:
+                print(f"  ❌ INCORRECT: '{unchanged[:30]}...' is directly marked")
+                print(f"    Start marker: {lines[paragraph_line_index-1].strip()}")
+                print(f"    End marker: {lines[paragraph_line_index+1].strip()}")
+            else:
+                print(f"  ✅ CORRECT: '{unchanged[:30]}...' is not directly marked")
+                
+                # Show adjacent markers for context (this is expected and OK)
+                adjacent_markers = []
+                if (paragraph_line_index > 0 and "*FASTDOC*" in lines[paragraph_line_index-1]):
+                    adjacent_markers.append(f"Before: {lines[paragraph_line_index-1].strip()}")
+                if (paragraph_line_index < len(lines)-1 and "*FASTDOC*" in lines[paragraph_line_index+1]):
+                    adjacent_markers.append(f"After: {lines[paragraph_line_index+1].strip()}")
+                
+                if adjacent_markers:
+                    print(f"    Adjacent markers (OK): {' | '.join(adjacent_markers)}")
+        else:
+            print(f"  ⚠️  Could not find paragraph: '{unchanged[:30]}...'")
+            
+    print("\nChecking that changed paragraphs ARE directly marked:")
+    changed_paragraphs = [
+        "This paragraph will change and now has additional content added to it.",
+        "Section paragraph to modify with new details and information.",
+        "New paragraph added to the section."
+    ]
+    
+    for changed in changed_paragraphs:
+        paragraph_line_index = None
+        for i, line in enumerate(lines):
+            if changed in line.strip():
+                paragraph_line_index = i
+                break
+        
+        if paragraph_line_index is not None:
+            has_start_marker_before = (paragraph_line_index > 0 and 
+                                     "*FASTDOC*" in lines[paragraph_line_index-1] and
+                                     "Start Modification" in lines[paragraph_line_index-1])
+            
+            has_end_marker_after = (paragraph_line_index < len(lines)-1 and 
+                                   "*FASTDOC*" in lines[paragraph_line_index+1] and
+                                   "End Modification" in lines[paragraph_line_index+1])
+            
+            is_directly_marked = has_start_marker_before and has_end_marker_after
+            
+            if is_directly_marked:
+                print(f"  ✅ CORRECT: '{changed[:30]}...' is directly marked")
+            else:
+                print(f"  ❌ INCORRECT: '{changed[:30]}...' is not directly marked")
+                if paragraph_line_index > 0:
+                    print(f"    Before: {lines[paragraph_line_index-1]}")
+                if paragraph_line_index < len(lines)-1:
+                    print(f"    After: {lines[paragraph_line_index+1]}")
+        else:
+            print(f"  ⚠️  Could not find paragraph: '{changed[:30]}...'")
+
+
+def test_user_example():
+    """Test the specific user example with AsciiDoc list modifications"""
+    processor = AsciiDocProcessor()
+    
+    original = """ifndef::imagesDir[]
+:imagesDir: http://download-pa3.quodfinancial.com/graphics/docimages/TradingFE
+endif::[]
+
+[[frontendribbontkt-beta-feribbontkt]]
+=== Ticket (Beta)
+
+Create *Buy (Beta)* or *Sell (Beta)* orders using the Equity Trading *Order ticket*.
+
+This section covers:
+
+* <<frontendribbontkt-beta-feribbontkt-buysell>>
+* <<frontendribbontkt-beta-feribbontkt-advanced>>
+* <<frontendribbontkt-beta-feribbontkt-depth>>
+* <<frontendribbontkt-beta-feribbontkt-order-ticket-confirmation>>
+* <<frontendribbontkt-beta-feribbontkt-customize>>
+
+The Order Ticket (Beta) has several workspace properties:
+
+* It can be docked anywhere in a user's workspace (see <<common-workspace-docking>>)
+* It can be piloted, establishing link between multiple panels or instruments where the content in one panel/instrument (called the 'piloted' panel)
+is driven from a selection in the originating panel/instrument (the 'out-piloting' panel). See <<common-commonactions-piloting>>
+* Multiple Order Tickets can be opened simultaneously
+* The layout can be <<frontendribbontkt-beta-feribbontkt-customize,customized>>
+* The layout can be <<common-workspace-cloning,cloned>>
+* Multiple layouts can be <<common-workspace-layouts,saved and reopened>>"""
+
+    updated = """ifndef::imagesDir[]
+:imagesDir: http://download-pa3.quodfinancial.com/graphics/docimages/TradingFE
+endif::[]
+
+[[frontendribbontkt-beta-feribbontkt]]
+=== Ticket (Beta)
+
+Create _Buy (Beta)_ or _Sell (Beta)_ orders using the Equity Trading _Order ticket_.
+
+This section covers:
+
+_ <<frontendribbontkt-beta-feribbontkt-buysell>>
+_ <<frontendribbontkt-beta-feribbontkt-advanced>>
+_ <<frontendribbontkt-beta-feribbontkt-depth>>
+_ <<frontendribbontkt-beta-feribbontkt-order-ticket-confirmation>>
+_ <<frontendribbontkt-beta-feribbontkt-customize>>
+
+The Order Ticket (Beta) has several workspace properties:
+
+_ It can be docked anywhere in a user's workspace (see <<common-workspace-docking>>)
+_ It can be piloted, establishing a link between multiple panels or instruments where the content in one panel/instrument (called the 'piloted' panel) is driven from a selection in the originating panel/instrument (the 'out-piloting' panel). See <<common-commonactions-piloting>>
+_ Multiple Order Tickets can be opened simultaneously
+_ The layout can be <<frontendribbontkt-beta-feribbontkt-customize,customized>>
+_ The layout can be <<common-workspace-cloning,cloned>>
+_ Multiple layouts can be <<common-workspace-layouts,saved and reopened>>
+_ A new tab group named "Trigger" has been added, which includes fields for order customization (see <<frontendribbontkt-beta-feribbontkt-trigger>>)."""
+
+    print("=== User's Specific Example Test ===")
+    print("Testing AsciiDoc list modifications and formatting changes")
+    print()
+    
+    # Test the block splitting
+    orig_blocks = processor._split_into_paragraphs(original)
+    updated_blocks = processor._split_into_paragraphs(updated)
+    
+    print(f"Original blocks: {len(orig_blocks)}")
+    for i, block in enumerate(orig_blocks):
+        print(f"  {i+1}: {block[:60].replace(chr(10), ' ')}...")
+    
+    print(f"\nUpdated blocks: {len(updated_blocks)}")  
+    for i, block in enumerate(updated_blocks):
+        print(f"  {i+1}: {block[:60].replace(chr(10), ' ')}...")
+    
+    # Test the change detection
+    result = processor.add_fastdoc_markers(original, updated)
+    
+    print("\n=== Result with FASTDOC Markers ===")
+    print(result)
+    
+    # Verify the expected markers are present
+    expected_markers = [
+        "// *FASTDOC* - Start Modification",
+        "// *FASTDOC* - End Modification"
+    ]
+    
+    marker_count = 0
+    for marker in expected_markers:
+        count = result.count(marker)
+        marker_count += count
+        print(f"\n'{marker}': {count} occurrences")
+    
+    print(f"\nTotal FASTDOC markers: {marker_count}")
+    
+    # Check if the new list item is included
+    if "Trigger" in result and "order customization" in result:
+        print("✅ New list item with 'Trigger' is present")
+    else:
+        print("❌ New list item with 'Trigger' is missing")
+    
+    # Check if formatting changes are handled
+    if "_Buy (Beta)_" in result and "_Order ticket_" in result:
+        print("✅ Formatting changes from * to _ are present")
+    else:
+        print("❌ Formatting changes are missing")
 
 
 if __name__ == "__main__":
     test_asciidoc_processor()
+    print("\n" + "="*80 + "\n")
+    test_paragraph_detection()
+    print("\n" + "="*80 + "\n")
+    test_precise_paragraph_marking()
+    print("\n" + "="*80 + "\n")
+    test_user_example()

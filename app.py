@@ -165,6 +165,64 @@ class QuodTaskApp:
         
         return st.session_state.jira_content is not None and st.session_state.asciidoc_content is not None
     
+    def jira_context_preview(self):
+        """Display and modify JIRA context with preview"""
+        if not st.session_state.jira_content:
+            return
+        
+        st.header("🎫 JIRA Context Modification & Preview")
+        
+        # Button to generate structured JIRA context
+        if st.button("📋 Generate Structured JIRA Context", type="secondary", use_container_width=True):
+            with st.spinner("🤖 Extracting structured information from JIRA ticket..."):
+                try:
+                    # Extract structured JIRA information
+                    jira_info = self.openai_updater.extract_jira_structured_info(
+                        st.session_state.jira_content
+                    )
+                    
+                    if jira_info['success']:
+                        st.session_state.jira_markdown_context = jira_info['markdown_content']
+                        st.success("✅ JIRA context successfully structured!")
+                    else:
+                        st.error("❌ Failed to structure JIRA context")
+                        
+                except Exception as e:
+                    st.error(f"❌ Error structuring JIRA context: {str(e)}")
+        
+        # Display structured JIRA context if available
+        if hasattr(st.session_state, 'jira_markdown_context') and st.session_state.jira_markdown_context:
+            st.subheader("📋 Structured JIRA Context")
+            
+            # Tabs for different views
+            tab1, tab2 = st.tabs(["📖 Markdown Preview", "📄 Raw Markdown"])
+            
+            with tab1:
+                st.markdown("### 🎯 Rendered Preview")
+                # Render the markdown content
+                st.markdown(st.session_state.jira_markdown_context)
+                
+                st.info("💡 This structured context will be used as additional context for document modification")
+            
+            with tab2:
+                st.markdown("### 📝 Raw Markdown Content")
+                st.code(st.session_state.jira_markdown_context, language="markdown")
+        
+        # Option to edit the structured context
+        if hasattr(st.session_state, 'jira_markdown_context') and st.session_state.jira_markdown_context:
+            with st.expander("✏️ Edit Structured JIRA Context", expanded=False):
+                edited_context = st.text_area(
+                    "Edit JIRA Context (Markdown format)",
+                    value=st.session_state.jira_markdown_context,
+                    height=300,
+                    help="You can manually edit the structured JIRA context here"
+                )
+                
+                if st.button("💾 Save Changes", key="save_jira_context"):
+                    st.session_state.jira_markdown_context = edited_context
+                    st.success("✅ JIRA context updated!")
+                    st.rerun()
+    
     def processing_configuration(self):
         """Configuration options for processing"""
         st.header("⚙️ Processing Configuration")
@@ -176,21 +234,9 @@ class QuodTaskApp:
             
             processing_mode = st.selectbox(
                 "Processing Mode",
-                ["Update Existing Sections", "Add New Sections", "Full Document Rewrite"],
+                ["Update Existing Sections", "Add New Sections", "Full Modification"],
                 index=2,
-                help="Choose how to process the documentation"
-            )
-            
-            include_todos = st.checkbox(
-                "Include TODO items from Jira",
-                value=True,
-                help="Include TODO and In-Progress items from the Jira ticket"
-            )
-            
-            preserve_formatting = st.checkbox(
-                "Preserve Original Formatting",
-                value=True,
-                help="Maintain original AsciiDoc formatting and structure"
+                help="Choose how to process the documentation:\n• Update Existing Sections: Updates existing sections\n• Add New Sections: Adds new sections\n• Full Modification: Both adds new sections and updates existing sections"
             )
         
         with col2:
@@ -207,7 +253,7 @@ class QuodTaskApp:
                 "AI Temperature",
                 min_value=0.0,
                 max_value=1.0,
-                value=0.1,
+                value=0.0,
                 step=0.1,
                 help="Lower values = more consistent, Higher values = more creative"
             )
@@ -216,15 +262,15 @@ class QuodTaskApp:
                 "Max Tokens",
                 min_value=1000,
                 max_value=8000,
-                value=4000,
+                value=4096,
                 step=500,
                 help="Maximum tokens for AI response"
             )
         
         return {
             'processing_mode': processing_mode,
-            'include_todos': include_todos,
-            'preserve_formatting': preserve_formatting,
+            'include_todos': True,  # Always include TODOs
+            'preserve_formatting': True,  # Always preserve formatting
             'ai_model': ai_model,
             'temperature': temperature,
             'max_tokens': max_tokens
@@ -247,7 +293,6 @@ class QuodTaskApp:
                     <li><strong>AsciiDoc File:</strong> {st.session_state.asciidoc_filename}</li>
                     <li><strong>Processing Mode:</strong> {config['processing_mode']}</li>
                     <li><strong>AI Model:</strong> {config['ai_model']}</li>
-                    <li><strong>Include TODOs:</strong> {'Yes' if config['include_todos'] else 'No'}</li>
                 </ul>
             </div>
             """, unsafe_allow_html=True)
@@ -278,8 +323,11 @@ class QuodTaskApp:
                     progress_bar.progress(60)
                     st.write("🔄 Generating documentation updates...")
                     
+                    # Get JIRA markdown context if available
+                    jira_markdown_context = getattr(st.session_state, 'jira_markdown_context', None)
+                    
                     updated_content = self.openai_updater.update_documentation(
-                        jira_content=st.session_state.jira_content,
+                        jira_content=jira_markdown_context if jira_markdown_context is not None else st.session_state.jira_content,
                         asciidoc_content=st.session_state.asciidoc_content,
                         config=config
                     )
@@ -290,7 +338,7 @@ class QuodTaskApp:
                     
                     final_content = self.asciidoc_processor.add_fastdoc_markers(
                         original_content=st.session_state.asciidoc_content,
-                        updated_content=updated_content
+                        updated_content=updated_content.replace('_', '*')
                     )
                     
                     progress_bar.progress(100)
@@ -664,7 +712,7 @@ Generated by QUOD Task - Documentation Processor
             # Reset button
             if st.button("🔄 Reset All", use_container_width=True):
                 for key in ['jira_content', 'asciidoc_content', 'processed_content', 
-                           'jira_filename', 'asciidoc_filename']:
+                           'jira_filename', 'asciidoc_filename', 'jira_markdown_context']:
                     st.session_state[key] = None
                 st.rerun()
             
@@ -701,6 +749,9 @@ Generated by QUOD Task - Documentation Processor
         files_uploaded = self.file_upload_section()
         
         if files_uploaded:
+            # Show JIRA context preview and modification
+            self.jira_context_preview()
+            
             config = self.processing_configuration()
             processing_completed = self.process_documents(config)
             
