@@ -304,7 +304,6 @@ Respond only with the updated AsciiDoc content, with no markdown formatting."""
             
             # Use predictive output if the model supports it
             if self.supports_predictive_output(model):
-                st.info(f"🚀 Using predictive output with {model} for enhanced modification quality")
                 response = self.client.chat.completions.create(
                     model=model,
                     messages=[
@@ -788,8 +787,6 @@ Provide a comprehensive analysis of what changed and why these changes accuratel
                 if (self.supports_predictive_output(model) and 
                     "ORIGINAL ASCIIDOC CONTENT:" in user_prompt):
                     
-                    st.info(f"🚀 Using predictive output with {model} for enhanced reprocessing")
-                    
                     parts = user_prompt.split("ORIGINAL ASCIIDOC CONTENT:", 1)
                     modification_instructions = parts[0].strip()
                     if len(parts) > 1:
@@ -812,11 +809,6 @@ Provide a comprehensive analysis of what changed and why these changes accuratel
                         temperature=config.get('temperature', 0.3)
                     )
                 else:
-                    # Fallback to standard method
-                    if not self.supports_predictive_output(model):
-                        st.warning(f"⚠️ Model {model} doesn't support predictive output. Using standard processing.")
-                    else:
-                        st.info("Using standard processing due to prompt structure.")
                         
                     response = self.client.chat.completions.create(
                         model=model,
@@ -828,8 +820,6 @@ Provide a comprehensive analysis of what changed and why these changes accuratel
                         temperature=config.get('temperature', 0.3)
                     )
             else:
-                # No original content available, use standard method
-                st.info("No original content available. Using standard processing.")
                 response = self.client.chat.completions.create(
                     model=model,
                     messages=[

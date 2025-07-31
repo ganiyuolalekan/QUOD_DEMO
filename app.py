@@ -122,13 +122,10 @@ class QuodTaskApp:
                         
                         st.success(f"Successfully loaded: {jira_file.name}")
                         
-                        # Preview
-                        with st.expander("👀 Preview Jira Content", expanded=True):
-                            preview_content = content[:1500] + "..." if len(content) > 1500 else content
-                            st.markdown(f'<div class="file-preview"><pre>{preview_content}</pre></div>', 
-                                      unsafe_allow_html=True)
-                            
-                            st.info(f"Content Stats: {len(content)} characters, {len(content.split())} words")
+                        # Simple text preview only
+                        with st.expander("👀 Preview Extracted Text", expanded=False):
+                            preview_content = content[:800] + "..." if len(content) > 800 else content
+                            st.text_area("Extracted Text", preview_content, height=200, disabled=True)
                     
                     except Exception as e:
                         st.error(f"Error processing Jira file: {str(e)}")
@@ -153,140 +150,37 @@ class QuodTaskApp:
                         
                         st.success(f"Successfully loaded: {asciidoc_file.name}")
                         
-                        # Preview
-                        with st.expander("👀 Preview AsciiDoc Content", expanded=True):
-                            preview_content = content[:1500] + "..." if len(content) > 1500 else content
-                            st.markdown(f'<div class="file-preview"><pre>{preview_content}</pre></div>', 
-                                      unsafe_allow_html=True)
-                            
-                            # Analyze AsciiDoc structure
-                            structure = self.asciidoc_processor.analyze_structure(content)
-                            st.info(f"Document Structure: {structure['headings']} headings, "
-                                  f"{structure['sections']} sections, {len(content.split())} words")
+                        # Simple text preview only
+                        with st.expander("👀 Preview Extracted Text", expanded=False):
+                            preview_content = content[:800] + "..." if len(content) > 800 else content
+                            st.text_area("Extracted Text", preview_content, height=200, disabled=True)
                     
                     except Exception as e:
                         st.error(f"Error processing AsciiDoc file: {str(e)}")
         
         return st.session_state.jira_content is not None and st.session_state.asciidoc_content is not None
     
-    def jira_context_preview(self):
-        """Display and modify JIRA context with preview"""
-        if not st.session_state.jira_content:
-            return
-        
-        st.header("JIRA Context Modification & Preview")
-        
-        # Button to generate structured JIRA context
-        if st.button("Generate Structured JIRA Context", type="secondary", use_container_width=True):
-            with st.spinner("Extracting structured information from JIRA ticket..."):
-                try:
-                    # Extract structured JIRA information
-                    jira_info = self.openai_updater.extract_jira_structured_info(
-                        st.session_state.jira_content
-                    )
-                    
-                    if jira_info['success']:
-                        st.session_state.jira_markdown_context = jira_info['markdown_content']
-                        st.success("JIRA context successfully structured!")
-                    else:
-                        st.error("Failed to structure JIRA context")
-                        
-                except Exception as e:
-                    st.error(f"Error structuring JIRA context: {str(e)}")
-        
-        # Display structured JIRA context if available
-        if hasattr(st.session_state, 'jira_markdown_context') and st.session_state.jira_markdown_context:
-            st.subheader("Structured JIRA Context")
-            
-            # Tabs for different views
-            tab1, tab2 = st.tabs(["Markdown Preview", "Raw Markdown"])
-            
-            with tab1:
-                st.markdown("### Rendered Preview")
-                # Render the markdown content
-                st.markdown(st.session_state.jira_markdown_context)
-                
-                st.info("This structured context will be used as additional context for document modification")
-            
-            with tab2:
-                st.markdown("### Raw Markdown Content")
-                st.code(st.session_state.jira_markdown_context, language="markdown")
-        
-        # Option to edit the structured context
-        if hasattr(st.session_state, 'jira_markdown_context') and st.session_state.jira_markdown_context:
-            with st.expander("Edit Structured JIRA Context", expanded=False):
-                edited_context = st.text_area(
-                    "Edit JIRA Context (Markdown format)",
-                    value=st.session_state.jira_markdown_context,
-                    height=300,
-                    help="You can manually edit the structured JIRA context here"
-                )
-                
-                if st.button("Save Changes", key="save_jira_context"):
-                    st.session_state.jira_markdown_context = edited_context
-                    st.success("JIRA context updated!")
-                    st.rerun()
+
     
-    def processing_configuration(self):
-        """Configuration options for processing"""
-        st.header("Processing Configuration")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Processing Options")
-            
-            processing_mode = st.selectbox(
-                "Processing Mode",
-                ["Update Existing Sections", "Add New Sections", "Full Modification"],
-                index=2,
-                help="Choose how to process the documentation:\n• Update Existing Sections: Updates existing sections\n• Add New Sections: Adds new sections\n• Full Modification: Both adds new sections and updates existing sections"
-            )
-        
-        with col2:
-            st.subheader("AI Configuration")
-            
-            ai_model = st.selectbox(
-                "OpenAI Model",
-                ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-                index=1,
-                help="Choose the OpenAI model for processing"
-            )
-            
-            temperature = st.slider(
-                "AI Temperature",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.0,
-                step=0.1,
-                help="Lower values = more consistent, Higher values = more creative"
-            )
-            
-            max_tokens = st.number_input(
-                "Max Tokens",
-                min_value=1000,
-                max_value=100000,
-                value=15000,
-                step=500,
-                help="Maximum tokens for AI response"
-            )
-        
-        return {
-            'processing_mode': processing_mode,
-            'include_todos': True,  # Always include TODOs
-            'preserve_formatting': True,  # Always preserve formatting
-            'ai_model': ai_model,
-            'temperature': temperature,
-            'max_tokens': max_tokens
-        }
+
     
-    def process_documents(self, config: Dict):
-        """Process the documents using OpenAI"""
+    def process_documents(self):
+        """Process the documents using OpenAI with default configuration"""
         st.header("Document Processing")
         
         if not (st.session_state.jira_content and st.session_state.asciidoc_content):
             st.warning("Please upload both files before processing")
             return False
+        
+        # Use default configuration
+        config = {
+            'processing_mode': 'Full Modification',
+            'include_todos': True,
+            'preserve_formatting': True,
+            'ai_model': 'gpt-4o-mini',
+            'temperature': 0.0,
+            'max_tokens': 15000
+        }
         
         with st.expander("Processing Information", expanded=True):
             st.markdown(f"""
@@ -295,8 +189,8 @@ class QuodTaskApp:
                 <ul>
                     <li><strong>Jira File:</strong> {st.session_state.jira_filename}</li>
                     <li><strong>AsciiDoc File:</strong> {st.session_state.asciidoc_filename}</li>
-                    <li><strong>Processing Mode:</strong> {config['processing_mode']}</li>
-                    <li><strong>AI Model:</strong> {config['ai_model']}</li>
+                    <li><strong>Processing Mode:</strong> {config['processing_mode']} (default)</li>
+                    <li><strong>AI Model:</strong> {config['ai_model']} (default)</li>
                 </ul>
             </div>
             """, unsafe_allow_html=True)
@@ -306,7 +200,24 @@ class QuodTaskApp:
                 progress_bar = st.progress(0)
                 
                 try:
-                    # Step 1: Analyze Jira content
+                    # Step 1: Generate structured JIRA context automatically
+                    progress_bar.progress(10)
+                    st.write("Structuring JIRA context automatically...")
+                    
+                    try:
+                        jira_info = self.openai_updater.extract_jira_structured_info(
+                            st.session_state.jira_content
+                        )
+                        
+                        if jira_info['success']:
+                            st.session_state.jira_markdown_context = jira_info['markdown_content']
+                        else:
+                            st.session_state.jira_markdown_context = None
+                    except Exception as e:
+                        st.warning(f"⚠️ Error structuring JIRA context: {str(e)}, using original content")
+                        st.session_state.jira_markdown_context = None
+                    
+                    # Step 2: Analyze Jira content
                     progress_bar.progress(20)
                     st.write("Analyzing Jira ticket content...")
                     
@@ -315,15 +226,15 @@ class QuodTaskApp:
                         include_todos=config['include_todos']
                     )
                     
-                    # Step 2: Analyze AsciiDoc structure
+                    # Step 3: Analyze AsciiDoc structure
                     progress_bar.progress(40)
-                    st.write("📖 Analyzing AsciiDoc structure...")
+                    st.write("Analyzing AsciiDoc structure...")
                     
                     asciidoc_structure = self.asciidoc_processor.analyze_structure(
                         st.session_state.asciidoc_content
                     )
                     
-                    # Step 3: Generate diff and updates
+                    # Step 4: Generate diff and updates
                     progress_bar.progress(60)
                     st.write("Generating documentation updates...")
                     
@@ -336,7 +247,7 @@ class QuodTaskApp:
                         config=config
                     )
                     
-                    # Step 4: Extract change snapshots and generate summary
+                    # Step 5: Extract change snapshots and generate summary
                     progress_bar.progress(80)
                     st.write("Analyzing changes and generating snapshots...")
                     
@@ -345,12 +256,6 @@ class QuodTaskApp:
                         original_content=st.session_state.asciidoc_content,
                         updated_content=updated_content
                     )
-                    
-                    # Show progress info
-                    if snapshots:
-                        st.success(f"Found {len(snapshots)} changes to analyze")
-                    else:
-                        st.warning("No FASTDOC markers found in the updated content")
                     
                     # Generate individual AI summaries for each change
                     st.write("Generating AI summaries for each change...")
@@ -377,8 +282,6 @@ class QuodTaskApp:
                     
                     progress_bar.progress(100)
                     st.session_state.processed_content = updated_content
-                    
-                    st.success("Processing completed successfully!")
                     return True
                 
                 except Exception as e:
@@ -395,25 +298,10 @@ class QuodTaskApp:
         
         st.header("Processing Results")
         
-        # Tabs for different views
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["Rendered Preview", "Side-by-Side Comparison", "Raw Output", "AI Prompts", "Change Snapshots"])
+        # Tabs for different views (removed Rendered Preview and AI Prompts)
+        tab1, tab2, tab3 = st.tabs(["Side-by-Side Comparison", "Raw Output", "Change Snapshots"])
         
         with tab1:
-            st.subheader("Updated AsciiDoc Preview")
-            
-            # Render AsciiDoc content
-            rendered_content = self.asciidoc_processor.render_for_display(
-                st.session_state.processed_content
-            )
-            
-            st.markdown(rendered_content, unsafe_allow_html=True)
-            
-            # Highlight FASTDOC markers
-            fastdoc_count = st.session_state.processed_content.count("FASTDOC")
-            if fastdoc_count > 0:
-                st.info(f"Found {fastdoc_count} FASTDOC markers indicating changes")
-        
-        with tab2:
             st.subheader("Before vs After Comparison")
             
             # Add display options
@@ -457,178 +345,17 @@ class QuodTaskApp:
             # Show diff statistics
             self.display_diff_stats()
         
-        with tab3:
+        with tab2:
             st.subheader("Raw AsciiDoc Output")
             st.code(st.session_state.processed_content, language="asciidoc")
         
-        with tab4:
-            self.display_ai_prompts()
-        
-        with tab5:
+        with tab3:
             self.display_change_snapshots()
         
         # Download section
         self.download_section()
     
-    def display_ai_prompts(self):
-        """Display and allow editing of AI prompts"""
-        st.subheader("AI Prompts & Responses")
-        
-        # Get the last prompts from the OpenAI integrator
-        prompt_data = self.openai_updater.get_last_prompts()
-        
-        if not prompt_data['has_prompts']:
-            st.info("No AI prompts available yet. Process documents first to see the prompts used.")
-            return
-        
-        st.markdown("""
-        **Use this section to:**
-        - Review the prompts that were sent to the AI
-        - Modify prompts to improve output quality
-        - Reprocess documents with custom prompts
-        """)
-        
-        # Tabs for different prompt types
-        prompt_tab1, prompt_tab2, prompt_tab3 = st.tabs(["Edit Prompts", "View Response", "Reprocess"])
-        
-        with prompt_tab1:
-            st.markdown("### System Prompt")
-            st.markdown("*This prompt defines the AI's role and instructions*")
-            
-            system_prompt = st.text_area(
-                "System Prompt",
-                value=prompt_data['system_prompt'] or "",
-                height=300,
-                help="The system prompt defines the AI's role and general instructions",
-                label_visibility="collapsed"
-            )
-            
-            st.markdown("### User Prompt")
-            st.markdown("*This prompt contains the specific task and context*")
-            
-            user_prompt = st.text_area(
-                "User Prompt", 
-                value=prompt_data['user_prompt'] or "",
-                height=400,
-                help="The user prompt contains the specific task and all the context data",
-                label_visibility="collapsed"
-            )
-            
-            # Store modified prompts in session state
-            st.session_state.custom_system_prompt = system_prompt
-            st.session_state.custom_user_prompt = user_prompt
-            
-            # Prompt improvement suggestions
-            with st.expander("Prompt Improvement Tips"):
-                st.markdown("""
-                **To improve AI output:**
-                
-                **System Prompt:**
-                - Be more specific about the type of changes needed
-                - Add constraints about content quality
-                - Specify output format requirements more clearly
-                
-                **User Prompt:**
-                - Provide more context about the documentation purpose
-                - Specify which sections need the most attention
-                - Include examples of desired changes
-                - Add validation criteria
-                
-                **Common Issues & Solutions:**
-                - AI not making enough changes → Add "You MUST modify content, not just copy it"
-                - AI adding incorrect formatting → Specify exact AsciiDoc syntax requirements
-                - AI missing important Jira details → Highlight key information in the prompt
-                """)
-        
-        with prompt_tab2:
-            st.markdown("### AI Response")
-            if prompt_data['response']:
-                st.code(prompt_data['response'], language="asciidoc")
-                
-                # Response analysis
-                response_lines = prompt_data['response'].count('\n')
-                response_chars = len(prompt_data['response'])
-                st.info(f"Response Stats: {response_lines} lines, {response_chars:,} characters")
-            else:
-                st.info("No AI response available")
-        
-        with prompt_tab3:
-            st.markdown("### Reprocess with Custom Prompts")
-            st.markdown("Use your modified prompts to reprocess the documents")
-            
-            if st.button("Reprocess with Custom Prompts", type="primary"):
-                if not (hasattr(st.session_state, 'custom_system_prompt') and 
-                       hasattr(st.session_state, 'custom_user_prompt')):
-                    st.error("Please modify prompts in the 'Edit Prompts' tab first")
-                    return
-                
-                # Get current config for reprocessing
-                config = {
-                    'ai_model': st.selectbox("AI Model for Reprocessing", 
-                                           ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"], 
-                                           index=0),
-                    'max_tokens': st.number_input("Max Tokens", min_value=1000, max_value=8000, value=4000),
-                    'temperature': st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.3)
-                }
-                
-                with st.spinner("Reprocessing with custom prompts..."):
-                    try:
-                        # Reprocess with custom prompts
-                        updated_content = self.openai_updater.reprocess_with_custom_prompts(
-                            st.session_state.custom_system_prompt,
-                            st.session_state.custom_user_prompt,
-                            config
-                        )
-                        
-                        if updated_content:
-                            # Add FASTDOC markers to the reprocessed content (commented out - now handled at AI output level)
-                            # final_content = self.asciidoc_processor.add_fastdoc_markers(
-                            #     original_content=st.session_state.asciidoc_content,
-                            #     updated_content=updated_content
-                            # )
-                            
-                            # Extract change snapshots and generate summary for reprocessed content
-                            snapshots = self.openai_updater.extract_change_snapshots(
-                                original_content=st.session_state.asciidoc_content,
-                                updated_content=updated_content
-                            )
-                            
-                            # Show reprocess progress info
-                            if snapshots:
-                                st.success(f"Found {len(snapshots)} changes in reprocessed content")
-                            else:
-                                st.warning("No FASTDOC markers found in the reprocessed content")
-                            
-                            # Generate individual AI summaries for reprocessed changes
-                            st.write("Generating AI summaries for reprocessed changes...")
-                            for snapshot in snapshots:
-                                ai_summary = self.openai_updater.generate_individual_change_summary(
-                                    original_section=snapshot['original'],
-                                    updated_section=snapshot['updated'],
-                                    change_type=snapshot['type'],
-                                    config=config
-                                )
-                                snapshot['ai_summary'] = ai_summary
-                            
-                            jira_context = getattr(st.session_state, 'jira_markdown_context', None)
-                            change_summary = self.openai_updater.generate_change_summary(
-                                jira_content=jira_context if jira_context is not None else st.session_state.jira_content,
-                                snapshots=snapshots,
-                                config=config
-                            )
-                            
-                            # Store results
-                            st.session_state.processed_content = updated_content
-                            st.session_state.change_snapshots = snapshots
-                            st.session_state.change_summary = change_summary
-                            
-                            st.success("Successfully reprocessed with custom prompts!")
-                            st.rerun()
-                        else:
-                            st.error("Reprocessing failed")
-                    
-                    except Exception as e:
-                        st.error(f"Error during reprocessing: {str(e)}")
+
     
     def display_diff_stats(self):
         """Display detailed diff statistics"""
@@ -935,11 +662,7 @@ Generated by QUOD Task - Documentation Processor
         files_uploaded = self.file_upload_section()
         
         if files_uploaded:
-            # Show JIRA context preview and modification
-            self.jira_context_preview()
-            
-            config = self.processing_configuration()
-            processing_completed = self.process_documents(config)
+            processing_completed = self.process_documents()
             
             if processing_completed:
                 self.display_results()
