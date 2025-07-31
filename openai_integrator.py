@@ -1,5 +1,5 @@
 import os
-from typing import Dict
+from typing import Dict, List
 import difflib
 import re
 from openai import OpenAI
@@ -40,7 +40,7 @@ class OpenAIDocumentationUpdater:
                 st.warning("⚠️ OpenAI API key not found. Please set OPENAI_API_KEY environment variable or add it to Streamlit secrets.")
         
         except Exception as e:
-            st.error(f"❌ Error initializing OpenAI client: {str(e)}")
+            st.error(f"Error initializing OpenAI client: {str(e)}")
     
     def is_available(self) -> bool:
         """Check if OpenAI client is available"""
@@ -112,7 +112,7 @@ Please provide a structured analysis focusing on information that would be relev
             }
         
         except Exception as e:
-            st.error(f"❌ Error analyzing Jira content with OpenAI: {str(e)}")
+            st.error(f"Error analyzing Jira content with OpenAI: {str(e)}")
             return self._fallback_jira_analysis(jira_content, include_todos)
     
     def _fallback_jira_analysis(self, jira_content: str, include_todos: bool) -> Dict:
@@ -188,7 +188,8 @@ Please provide a structured analysis focusing on information that would be relev
 -- Update existing documentation with new information from the Jira ticket
 -- Add new sections to the documentation for new functionality that doesn't fit in existing sections but is mentioned in the jira ticket
 -- Create comprehensive updates that can modify the entire document structure
--- Make meaningful changes that improve the documentation completeness"""
+-- Make meaningful changes that improve the documentation completeness
+-- There should be at least 1 new sections added/removed/modified in the documentation due to the jira ticket content"""
         else:
             return """- Follow standard documentation update practices
 -- Make changes that best reflect the Jira ticket information"""
@@ -235,14 +236,37 @@ CHANGE EXAMPLES:
 - If Jira describes bug fixes, update the affected sections of the asciidoc documentation with corrected information
 - If Jira includes new configuration options, add them to configuration sections of the asciidoc documentation
 
+FASTDOC MARKER REQUIREMENTS:
+You MUST add FASTDOC markers to identify changes in your output:
+- Wrap MODIFIED sections (updated existing content) with:
+  // *FASTDOC* - Start Modification
+  [modified content here]
+  // *FASTDOC* - End Modification
+
+- Wrap ADDED sections (completely new content) with:
+  // *FASTDOC* - Start Modification  
+  [new content here]
+  // *FASTDOC* - End Modification
+
+- For REMOVED content, add a comment where the content was removed:
+  // *FASTDOC* - Content Removed (description of what was removed)
+
+MARKER RULES:
+- Only add markers around content that has actually changed
+- Do NOT add markers around unchanged content
+- Ensure markers are on their own lines
+- Use AsciiDoc comment syntax (//) for markers
+- Be precise - only mark the specific paragraphs/sections that changed
+
 FORMAT REQUIREMENTS:
 - Use proper AsciiDoc heading syntax (=, ==, ===, etc.)
 - Maintain existing document structure, only parts of the document that needs change or a new section should be amended
 - Preserve all original content that is still relevant
-- DO NOT add FASTDOC markers (these are added later)
+- Add FASTDOC markers directly in your output to identify all changes
+- Ensure the full context from the jira ticket is included/reflected in the output
 
 VALIDATION:
-Before finishing, ensure every section you modified/added contains information that was NOT in the original document."""
+Before finishing, ensure every section you modified/added contains information that was NOT in the original document and is properly marked with FASTDOC markers."""
             
             # User prompt with modification instructions based on Jira content
             modification_prompt = f"""Based on the following JIRA ticket information, please modify the AsciiDoc documentation:
@@ -320,8 +344,322 @@ Respond only with the updated AsciiDoc content, with no markdown formatting."""
             return updated_content
         
         except Exception as e:
-            st.error(f"❌ Error updating documentation with OpenAI: {str(e)}")
+            st.error(f"Error updating documentation with OpenAI: {str(e)}")
             return self._fallback_documentation_update(jira_content, asciidoc_content, config)
+    
+    def extract_change_snapshots(self, original_content: str, updated_content: str) -> List[Dict]:
+        """
+        Extract changed sections with FASTDOC markers and create clean snapshots for table display
+        
+        Args:
+            original_content (str): Original content before changes
+            updated_content (str): Content with FASTDOC markers
+            
+        Returns:
+            List[Dict]: List of change snapshots with original, updated, and AI summary
+        """
+        snapshots = []
+        updated_lines = updated_content.split('\n')
+        
+        i = 0
+        while i < len(updated_lines):
+            line = updated_lines[i].strip()
+            
+            # Look for start of modification marker
+            if line.startswith('// *FASTDOC* - Start Modification'.replace('*', '_')):
+                content_lines = []
+                i += 1
+                
+                # Collect content between start and end markers
+                while i < len(updated_lines):
+                    if updated_lines[i].strip().startswith('// *FASTDOC* - End Modification'.replace('*', '_')):
+                        break
+                    content_lines.append(updated_lines[i])
+                    i += 1
+                else:
+                    # No end marker found, skip this section
+                    i += 1
+                    continue
+                
+                updated_section = '\n'.join(content_lines).strip()
+                
+                # Find the corresponding section in original content
+                original_section = self._find_related_original_section(original_content, updated_section)
+                
+                # Determine if this is a modification or new section
+                if original_section:
+                    change_type = 'modification' if original_section.strip() != updated_section.strip() else 'unchanged'
+                else:
+                    change_type = 'new_section'
+                    original_section = "No corresponding section found (New content)"
+                
+                # Create snapshot for table display
+                snapshot = {
+                    'original': original_section,
+                    'updated': updated_section,
+                    'type': change_type,
+                    'id': len(snapshots) + 1
+                }
+                snapshots.append(snapshot)
+                
+            # Look for content removed marker
+            elif line.startswith('// *FASTDOC* - Content Removed'.replace('*', '_')):
+                removed_desc = line.replace('// *FASTDOC* - Content Removed'.replace('*', '_')).strip()
+                if removed_desc.startswith('(') and removed_desc.endswith(')'):
+                    removed_desc = removed_desc[1:-1]
+                
+                snapshot = {
+                    'original': removed_desc,
+                    'updated': "Content removed",
+                    'type': 'removal',
+                    'id': len(snapshots) + 1
+                }
+                snapshots.append(snapshot)
+            
+            i += 1
+        
+        return snapshots
+    
+    def _find_related_original_section(self, original_content: str, updated_section: str) -> str:
+        """
+        Find the related section in original content that corresponds to the updated section
+        
+        Args:
+            original_content (str): Original document content
+            updated_section (str): Updated section content
+            
+        Returns:
+            str: Related original section or None if not found (indicating new section)
+        """
+        if not updated_section.strip():
+            return None
+        
+        updated_lines = [line.strip() for line in updated_section.split('\n') if line.strip()]
+        if not updated_lines:
+            return None
+        
+        # Strategy 1: Look for exact heading matches in AsciiDoc
+        for line in updated_lines[:3]:  # Check first 3 lines for headings
+            if line.startswith('=') and len(line) > 2:  # AsciiDoc heading
+                heading_text = line.lstrip('=').strip()
+                if heading_text in original_content:
+                    # Found the heading, extract the original section
+                    return self._extract_section_by_heading(original_content, heading_text)
+        
+        # Strategy 2: Look for similar content blocks using key phrases
+        # Find the best matching paragraph/section in original content
+        best_match = ""
+        best_similarity = 0
+        
+        # Split original into logical sections (by double newlines or headings)
+        original_sections = self._split_into_sections(original_content)
+        
+        for section in original_sections:
+            if len(section.strip()) > 20:  # Only consider substantial sections
+                similarity = self._calculate_text_similarity(updated_section, section)
+                if similarity > best_similarity and similarity > 0.4:  # Higher threshold for better matching
+                    best_similarity = similarity
+                    best_match = section.strip()
+        
+        return best_match if best_match else None
+    
+    def _split_into_sections(self, content: str) -> List[str]:
+        """Split content into logical sections"""
+        # Split by AsciiDoc headings and double newlines
+        lines = content.split('\n')
+        sections = []
+        current_section = []
+        
+        for line in lines:
+            if line.startswith('=') and len(line.strip()) > 2:  # New heading
+                if current_section:
+                    sections.append('\n'.join(current_section))
+                    current_section = [line]
+                else:
+                    current_section.append(line)
+            else:
+                current_section.append(line)
+        
+        if current_section:
+            sections.append('\n'.join(current_section))
+        
+        # Also split by double newlines for non-heading sections
+        additional_sections = []
+        for section in sections:
+            if not any(line.startswith('=') for line in section.split('\n')):
+                additional_sections.extend([s.strip() for s in section.split('\n\n') if s.strip()])
+            else:
+                additional_sections.append(section)
+        
+        return additional_sections
+    
+    def _extract_section_by_heading(self, content: str, heading_text: str) -> str:
+        """Extract a section from content based on heading"""
+        lines = content.split('\n')
+        section_lines = []
+        in_section = False
+        current_heading_level = 0
+        
+        for line in lines:
+            if heading_text in line and line.startswith('='):
+                in_section = True
+                current_heading_level = len(line) - len(line.lstrip('='))
+                section_lines.append(line)
+                continue
+            
+            if in_section:
+                # Check if we hit another heading of same or higher level
+                if line.startswith('='):
+                    new_heading_level = len(line) - len(line.lstrip('='))
+                    if new_heading_level <= current_heading_level:
+                        break
+                section_lines.append(line)
+        
+        return '\n'.join(section_lines).strip()
+    
+    def _calculate_text_similarity(self, text1: str, text2: str) -> float:
+        """Calculate basic text similarity between two strings"""
+        if not text1 or not text2:
+            return 0.0
+        
+        # Simple word-based similarity
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        
+        return len(intersection) / len(union) if union else 0.0
+    
+    def generate_individual_change_summary(self, original_section: str, updated_section: str, change_type: str, config: Dict) -> str:
+        """
+        Generate an AI summary for an individual change
+        
+        Args:
+            original_section (str): Original content section
+            updated_section (str): Updated content section  
+            change_type (str): Type of change (modification, new_section, removal)
+            config (Dict): Configuration options
+            
+        Returns:
+            str: AI-generated summary of the change
+        """
+        if not self.is_available():
+            return f"Change type: {change_type}. OpenAI not available for detailed summary."
+        
+        try:
+            if change_type == 'removal':
+                system_prompt = "You are an expert at analyzing documentation changes. Summarize what content was removed and its significance."
+                user_prompt = f"Content that was removed:\n{original_section}\n\nProvide a brief summary of what was removed and why this might be significant."
+            
+            elif change_type == 'new_section':
+                system_prompt = "You are an expert at analyzing documentation changes. Summarize new content that was added."
+                user_prompt = f"New content that was added:\n{updated_section}\n\nProvide a brief summary of what was added and its purpose."
+            
+            else:  # modification
+                system_prompt = "You are an expert at analyzing documentation changes. Compare the original and updated content to summarize what changed."
+                user_prompt = f"""Compare these two content sections and summarize what changed:
+
+ORIGINAL:
+{original_section}
+
+UPDATED:
+{updated_section}
+
+Provide a brief summary of the key changes made and their significance."""
+
+            response = self.client.chat.completions.create(
+                model=config.get('ai_model', 'gpt-4o-mini'),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=200,  # Keep summaries concise
+                temperature=0.3
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            return f"Error generating summary: {str(e)}"
+    
+    def _create_content_preview(self, content: str, max_length: int = 100) -> str:
+        """Create a preview of content for display"""
+        if len(content) <= max_length:
+            return content
+        
+        # Try to find a good break point
+        preview = content[:max_length]
+        last_space = preview.rfind(' ')
+        if last_space > max_length * 0.7:  # If we find a space in the last 30%
+            preview = preview[:last_space]
+        
+        return preview + "..."
+    
+    def generate_change_summary(self, jira_content: str, snapshots: List[Dict], config: Dict) -> str:
+        """
+        Generate an LLM summary of what changed and why it reflects the Jira ticket
+        
+        Args:
+            jira_content (str): Original Jira ticket content
+            snapshots (List[Dict]): List of change snapshots
+            config (Dict): Configuration options
+            
+        Returns:
+            str: Summary of changes
+        """
+        if not self.is_available() or not snapshots:
+            return "No changes detected or OpenAI not available."
+        
+        try:
+            # Prepare snapshot content for analysis
+            snapshot_text = ""
+            for i, snapshot in enumerate(snapshots, 1):
+                snapshot_text += f"\n=== Change {i} ({snapshot['type']}) ===\n"
+                snapshot_text += f"Location: Lines {snapshot['line_start']}-{snapshot['line_end']}\n"
+                snapshot_text += f"Content: {snapshot['content']}\n"
+            
+            system_prompt = """You are an expert at analyzing documentation changes and their relationship to Jira tickets.
+
+Your task is to:
+1. Analyze the changes made to the documentation
+2. Explain how each change relates to the Jira ticket content
+3. Provide a clear, concise summary of what was modified/added/removed
+4. Validate that the changes accurately reflect the Jira requirements
+
+Format your response with:
+- **Summary**: Overall description of changes
+- **Change Analysis**: Detailed breakdown of each change and its purpose
+- **Jira Alignment**: How the changes address the Jira ticket requirements
+- **Impact**: What these changes mean for the documentation users"""
+
+            user_prompt = f"""Please analyze the following documentation changes and explain how they relate to the Jira ticket:
+
+JIRA TICKET CONTENT:
+{jira_content}
+
+DOCUMENTATION CHANGES MADE:
+{snapshot_text}
+
+Provide a comprehensive analysis of what changed and why these changes accurately reflect the Jira ticket requirements."""
+
+            response = self.client.chat.completions.create(
+                model=config.get('ai_model', 'gpt-4o-mini'),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.3
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            return f"Error generating change summary: {str(e)}"
     
     def _fallback_documentation_update(self, jira_content: str, asciidoc_content: str, config: Dict) -> str:
         """Fallback documentation update using simple text processing"""
@@ -632,7 +970,7 @@ Provide the complete markdown document following the template structure."""
             }
 
         except Exception as e:
-            st.error(f"❌ Error extracting JIRA structured info with OpenAI: {str(e)}")
+            st.error(f"Error extracting JIRA structured info with OpenAI: {str(e)}")
             return self._fallback_jira_structured_extraction(jira_content)
 
     def _fallback_jira_structured_extraction(self, jira_content: str) -> Dict:

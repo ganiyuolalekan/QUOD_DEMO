@@ -187,7 +187,7 @@ class AsciiDocProcessor:
                 for i, original_para in enumerate(original_paragraphs):
                     if i not in matched_original:
                         similarity = self._calculate_paragraph_similarity(original_para, updated_para)
-                        if similarity > best_similarity and similarity > 0.4:  # Threshold for modification
+                        if similarity > best_similarity and similarity > 0.7:  # Higher threshold to reduce false positives
                             best_similarity = similarity
                             best_match_idx = i
                 
@@ -248,7 +248,7 @@ class AsciiDocProcessor:
     
     def _paragraphs_identical(self, para1: str, para2: str) -> bool:
         """
-        Check if two paragraphs are identical (after normalizing whitespace)
+        Check if two paragraphs are identical (after normalizing whitespace and minor formatting)
         
         Args:
             para1 (str): First paragraph
@@ -257,7 +257,57 @@ class AsciiDocProcessor:
         Returns:
             bool: True if paragraphs are identical
         """
-        return para1.strip() == para2.strip()
+        if not para1.strip() and not para2.strip():
+            return True
+        
+        # First check exact match after basic whitespace normalization
+        norm1 = ' '.join(para1.split())
+        norm2 = ' '.join(para2.split())
+        
+        if norm1 == norm2:
+            return True
+        
+        # Check if they're functionally identical after normalizing common formatting variations
+        normalized1 = self._deep_normalize_for_comparison(para1)
+        normalized2 = self._deep_normalize_for_comparison(para2)
+        
+        return normalized1 == normalized2
+    
+    def _deep_normalize_for_comparison(self, text: str) -> str:
+        """
+        Deep normalization for detecting functional equivalence
+        
+        Args:
+            text (str): Text to normalize
+            
+        Returns:
+            str: Deeply normalized text
+        """
+        if not text.strip():
+            return ""
+        
+        # Normalize whitespace
+        normalized = ' '.join(text.split())
+        
+        # Normalize common AsciiDoc formatting variations
+        # Convert both *emphasis* and _emphasis_ to the same format (they're functionally equivalent)
+        normalized = re.sub(r'\*([^*\s][^*]*?[^*\s])\*', r'EMPHASIS:\1:EMPHASIS', normalized)  # *word* -> EMPHASIS:word:EMPHASIS
+        normalized = re.sub(r'_([^_\s][^_]*?[^_\s])_', r'EMPHASIS:\1:EMPHASIS', normalized)    # _word_ -> EMPHASIS:word:EMPHASIS
+        normalized = re.sub(r'\*([^*\s])\*', r'EMPHASIS:\1:EMPHASIS', normalized)              # *a* -> EMPHASIS:a:EMPHASIS  
+        normalized = re.sub(r'_([^_\s])_', r'EMPHASIS:\1:EMPHASIS', normalized)                # _a_ -> EMPHASIS:a:EMPHASIS
+        
+        # Normalize bullet point variations
+        normalized = re.sub(r'^[\s]*[*_\-]\s+', '• ', normalized, flags=re.MULTILINE)
+        
+        # Normalize quotes
+        normalized = normalized.replace('"', '"').replace('"', '"').replace(''', "'").replace(''', "'")
+        
+        # Remove extra whitespace around punctuation
+        normalized = re.sub(r'\s+([,.;:!?])', r'\1', normalized)
+        normalized = re.sub(r'([,.;:!?])\s+', r'\1 ', normalized)
+        
+        # Convert to lowercase for final comparison
+        return normalized.lower().strip()
     
     def _calculate_paragraph_similarity(self, para1: str, para2: str) -> float:
         """
@@ -373,15 +423,22 @@ class AsciiDocProcessor:
         similarity = difflib.SequenceMatcher(None, old_paragraph, new_paragraph).ratio()
         
         # If very similar, check word-level changes
-        if similarity > 0.8:
+        if similarity > 0.9:
+            # Use deep normalization to check for functional equivalence
+            norm_old = self._deep_normalize_for_comparison(old_paragraph)
+            norm_new = self._deep_normalize_for_comparison(new_paragraph)
+            
+            if norm_old == norm_new:
+                return 'unchanged'
+            
             old_words = set(old_paragraph.lower().split())
             new_words = set(new_paragraph.lower().split())
             
             added_words = new_words - old_words
             removed_words = old_words - new_words
             
-            # Minor edit threshold
-            if len(added_words) <= 3 and len(removed_words) <= 3:
+            # More stringent minor edit threshold
+            if len(added_words) <= 2 and len(removed_words) <= 2:
                 return 'minor_edit' if (added_words or removed_words) else 'unchanged'
         
         # Check for expansion (significant length increase)
@@ -391,9 +448,18 @@ class AsciiDocProcessor:
         if new_length > old_length * 1.5 and similarity > 0.5:
             return 'expansion'
         
-        # Determine if change is substantial
-        if similarity < 0.6:
+        # Determine if change is substantial - be more conservative
+        if similarity < 0.5:
             return 'substantial_modification'
+        elif similarity > 0.85:
+            # High similarity - double-check with deep normalization
+            norm_old = self._deep_normalize_for_comparison(old_paragraph)
+            norm_new = self._deep_normalize_for_comparison(new_paragraph)
+            
+            if norm_old == norm_new:
+                return 'unchanged'
+            else:
+                return 'minor_edit'
         else:
             return 'minor_edit'
     
@@ -645,13 +711,13 @@ class AsciiDocProcessor:
                 # Escape the line content to prevent HTML issues
                 escaped_line = html.escape(line)
                 if "Start Modification" in line:
-                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 8px; margin: 8px 0; font-weight: bold; color: #856404;">🔧 {escaped_line}</div>')
+                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 8px; margin: 8px 0; font-weight: bold; color: #856404;">[MOD] {escaped_line}</div>')
                 elif "End Modification" in line:
-                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #d4edda; border-left: 4px solid #28a745; padding: 8px; margin: 8px 0; font-weight: bold; color: #155724;">✅ {escaped_line}</div>')
+                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #d4edda; border-left: 4px solid #28a745; padding: 8px; margin: 8px 0; font-weight: bold; color: #155724;">[END] {escaped_line}</div>')
                 elif "Content Removed" in line:
-                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 8px; margin: 8px 0; font-weight: bold; color: #721c24;">🗑️ {escaped_line}</div>')
+                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 8px; margin: 8px 0; font-weight: bold; color: #721c24;">[DEL] {escaped_line}</div>')
                 else:
-                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #f8f9fa; border-left: 4px solid #6c757d; padding: 8px; margin: 8px 0; font-weight: bold;">🏷️ {escaped_line}</div>')
+                    html_lines.append(f'<div class="fastdoc-marker" style="background-color: #f8f9fa; border-left: 4px solid #6c757d; padding: 8px; margin: 8px 0; font-weight: bold;">[TAG] {escaped_line}</div>')
                 continue
             
             # Handle code blocks
@@ -683,13 +749,13 @@ class AsciiDocProcessor:
             # Handle blockquotes (NOTE: admonition)
             if original_line.strip().startswith('NOTE:'):
                 note_content = html.escape(original_line[5:].strip())
-                safe_line = f'<div style="background-color: #e7f3ff; border-left: 4px solid #2196F3; padding: 12px; margin: 12px 0;"><strong>ℹ️ Note:</strong> {note_content}</div>'
+                safe_line = f'<div style="background-color: #e7f3ff; border-left: 4px solid #2196F3; padding: 12px; margin: 12px 0;"><strong>Note:</strong> {note_content}</div>'
             elif original_line.strip().startswith('WARNING:'):
                 warning_content = html.escape(original_line[8:].strip())
-                safe_line = f'<div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 12px 0;"><strong>⚠️ Warning:</strong> {warning_content}</div>'
+                safe_line = f'<div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 12px 0;"><strong>Warning:</strong> {warning_content}</div>'
             elif original_line.strip().startswith('TIP:'):
                 tip_content = html.escape(original_line[4:].strip())
-                safe_line = f'<div style="background-color: #d1ecf1; border-left: 4px solid #bee5eb; padding: 12px; margin: 12px 0;"><strong>💡 Tip:</strong> {tip_content}</div>'
+                safe_line = f'<div style="background-color: #d1ecf1; border-left: 4px solid #bee5eb; padding: 12px; margin: 12px 0;"><strong>Tip:</strong> {tip_content}</div>'
             
             # Regular paragraphs
             if original_line.strip():
@@ -1007,11 +1073,11 @@ New paragraph added to the section."""
             is_directly_marked = has_start_marker_before and has_end_marker_after
             
             if is_directly_marked:
-                print(f"  ❌ INCORRECT: '{unchanged[:30]}...' is directly marked")
+                print(f"  INCORRECT: '{unchanged[:30]}...' is directly marked")
                 print(f"    Start marker: {lines[paragraph_line_index-1].strip()}")
                 print(f"    End marker: {lines[paragraph_line_index+1].strip()}")
             else:
-                print(f"  ✅ CORRECT: '{unchanged[:30]}...' is not directly marked")
+                print(f"  CORRECT: '{unchanged[:30]}...' is not directly marked")
                 
                 # Show adjacent markers for context (this is expected and OK)
                 adjacent_markers = []
@@ -1023,7 +1089,7 @@ New paragraph added to the section."""
                 if adjacent_markers:
                     print(f"    Adjacent markers (OK): {' | '.join(adjacent_markers)}")
         else:
-            print(f"  ⚠️  Could not find paragraph: '{unchanged[:30]}...'")
+            print(f"  WARNING: Could not find paragraph: '{unchanged[:30]}...'")
             
     print("\nChecking that changed paragraphs ARE directly marked:")
     changed_paragraphs = [
@@ -1051,15 +1117,61 @@ New paragraph added to the section."""
             is_directly_marked = has_start_marker_before and has_end_marker_after
             
             if is_directly_marked:
-                print(f"  ✅ CORRECT: '{changed[:30]}...' is directly marked")
+                print(f"  CORRECT: '{changed[:30]}...' is directly marked")
             else:
-                print(f"  ❌ INCORRECT: '{changed[:30]}...' is not directly marked")
+                print(f"  INCORRECT: '{changed[:30]}...' is not directly marked")
                 if paragraph_line_index > 0:
                     print(f"    Before: {lines[paragraph_line_index-1]}")
                 if paragraph_line_index < len(lines)-1:
                     print(f"    After: {lines[paragraph_line_index+1]}")
         else:
-            print(f"  ⚠️  Could not find paragraph: '{changed[:30]}...'")
+            print(f"  WARNING: Could not find paragraph: '{changed[:30]}...'")
+
+
+def test_false_positive_prevention():
+    """Test that identical content doesn't get marked with FASTDOC markers"""
+    processor = AsciiDocProcessor()
+    
+    # Test case 1: Completely identical content
+    identical_content = """Child Strategies are enabled for parent strategies that support SOR child strategies.
+For example a VWAP parent strategy can have a Quod Financial Lit SOR child strategy."""
+    
+    result = processor.add_fastdoc_markers(identical_content, identical_content)
+    
+    print("=== False Positive Prevention Test ===")
+    print("Testing identical content marking...")
+    
+    if "*FASTDOC*" in result:
+        print("FAIL: Identical content was marked with FASTDOC markers")
+        print("Result:", result)
+    else:
+        print("PASS: Identical content was not marked")
+    
+    # Test case 2: Minor formatting differences that should be ignored
+    original = "Child Strategies are enabled for parent strategies that support SOR *child* strategies."
+    updated = "Child Strategies are enabled for parent strategies that support SOR _child_ strategies."
+    
+    result2 = processor.add_fastdoc_markers(original, updated)
+    
+    print("\nTesting minor formatting differences...")
+    if "*FASTDOC*" in result2:
+        print("FAIL: Minor formatting differences triggered FASTDOC markers")
+        print("Result:", result2)
+    else:
+        print("PASS: Minor formatting differences were ignored")
+    
+    # Test case 3: Real change should still be detected
+    original3 = "Child Strategies are enabled for parent strategies."
+    updated3 = "Child Strategies are enabled for parent strategies that support SOR child strategies with new functionality."
+    
+    result3 = processor.add_fastdoc_markers(original3, updated3)
+    
+    print("\nTesting real content changes...")
+    if "*FASTDOC*" in result3:
+        print("PASS: Real content changes were detected and marked")
+    else:
+        print("FAIL: Real content changes were not detected")
+        print("Result:", result3)
 
 
 def test_user_example():
@@ -1158,21 +1270,23 @@ _ A new tab group named "Trigger" has been added, which includes fields for orde
     
     # Check if the new list item is included
     if "Trigger" in result and "order customization" in result:
-        print("✅ New list item with 'Trigger' is present")
+        print("New list item with 'Trigger' is present")
     else:
-        print("❌ New list item with 'Trigger' is missing")
+        print("New list item with 'Trigger' is missing")
     
     # Check if formatting changes are handled
     if "_Buy (Beta)_" in result and "_Order ticket_" in result:
-        print("✅ Formatting changes from * to _ are present")
+        print("Formatting changes from * to _ are present")
     else:
-        print("❌ Formatting changes are missing")
+        print("Formatting changes are missing")
 
 
 if __name__ == "__main__":
+    test_false_positive_prevention()
+    print("\n" + "="*80 + "\n")
     test_asciidoc_processor()
     print("\n" + "="*80 + "\n")
-    test_paragraph_detection()
+    test_paragraph_detection() 
     print("\n" + "="*80 + "\n")
     test_precise_paragraph_marking()
     print("\n" + "="*80 + "\n")
