@@ -202,7 +202,6 @@ class QuodTaskApp:
                 try:
                     # Step 1: Generate structured JIRA context automatically
                     progress_bar.progress(10)
-                    st.write("Structuring JIRA context automatically...")
                     
                     try:
                         jira_info = self.openai_updater.extract_jira_structured_info(
@@ -219,7 +218,6 @@ class QuodTaskApp:
                     
                     # Step 2: Analyze Jira content
                     progress_bar.progress(20)
-                    st.write("Analyzing Jira ticket content...")
                     
                     jira_analysis = self.openai_updater.analyze_jira_content(
                         st.session_state.jira_content,
@@ -228,7 +226,6 @@ class QuodTaskApp:
                     
                     # Step 3: Analyze AsciiDoc structure
                     progress_bar.progress(40)
-                    st.write("Analyzing AsciiDoc structure...")
                     
                     asciidoc_structure = self.asciidoc_processor.analyze_structure(
                         st.session_state.asciidoc_content
@@ -236,7 +233,6 @@ class QuodTaskApp:
                     
                     # Step 4: Generate diff and updates
                     progress_bar.progress(60)
-                    st.write("Generating documentation updates...")
                     
                     # Get JIRA markdown context if available
                     jira_markdown_context = getattr(st.session_state, 'jira_markdown_context', None)
@@ -249,7 +245,6 @@ class QuodTaskApp:
                     
                     # Step 5: Extract change snapshots and generate summary
                     progress_bar.progress(80)
-                    st.write("Analyzing changes and generating snapshots...")
                     
                     # Extract change snapshots from the updated content
                     snapshots = self.openai_updater.extract_change_snapshots(
@@ -258,7 +253,6 @@ class QuodTaskApp:
                     )
                     
                     # Generate individual AI summaries for each change
-                    st.write("Generating AI summaries for each change...")
                     for snapshot in snapshots:
                         ai_summary = self.openai_updater.generate_individual_change_summary(
                             original_section=snapshot['original'],
