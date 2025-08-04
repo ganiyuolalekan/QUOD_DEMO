@@ -319,7 +319,6 @@ Respond only with the updated AsciiDoc content, with no markdown formatting."""
                     temperature=config.get('temperature', 0.3)
                 )
             else:
-                st.warning(f"⚠️ Model {model} doesn't support predictive output. Using standard processing.")
                 # Fallback to standard processing with combined prompt
                 combined_prompt = f"{modification_prompt}\n\nCURRENT ASCIIDOC DOCUMENTATION:\n{asciidoc_content}"
                 response = self.client.chat.completions.create(
